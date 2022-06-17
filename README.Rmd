@@ -1,8 +1,7 @@
 ---
 title: "House prices"
-output:
-  html_document: default
-date: '2022-06-17'
+output: github_document
+always_allow_html: true
 ---
 
 
