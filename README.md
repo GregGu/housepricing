@@ -3,20 +3,19 @@ House prices
 
 # Introduction
 
-This notebook is for the prediction of property sale price. This
-notebook will be split into four major sections.
+This notebook is for the prediction of property sale price. My initial
+thoughts based on a glimpse at the data is to predict sale price using
+the general features of quality, size, and location. This notebook will
+be split into four major sections.
 
 1.  [processing missing analysis](#1)
 2.  [exploratory analysis, e.g. correlation plots](#2)
 3.  [feature engineering](#3)
 4.  [modeling](#4)
 
-My initial thoughts based on a glimpse at the data is to predict sale
-price using the general features of quality, size, and location. The
-time may also play a role in the sale of a home but given my limited
-time working on this problem I will not prioritize time series.
-
 # Importing
+
+Package libraries and data importing.
 
 ``` r
 devtools::load_all()
@@ -76,12 +75,11 @@ df <- dplyr::bind_rows(dftrain, dftest)
 
 # Processing and missing analysis
 
-First we take a glimpse and see if we can fix any errors. Columns with
-extremely high values of NAs will be removed. We may be able to infer
-categories from the missing values. Later in analysis, we may want to
-reconsider miss_case_summary() which gives us percentage of missing
-variables in a row. If a row has a large percentage of data missing it
-may be better to exclude than to impute.
+First we take a glimpse at missing values. Columns with extremely high
+values of NAs will be removed. There is patternistic missing (similar
+percentage in many columns) which is likely due to the missing being
+meaningful. The data description gives us insight on some of these NA
+values.
 
 ``` r
 df %>%
@@ -129,38 +127,75 @@ df %>%
     ## 34 GarageArea        1   0.0343
     ## 35 SaleType          1   0.0343
 
-Firstly, lets remove variables which have such a high percentage of NA
+First, lets remove variables which have such a high percentage of NA
 that they are not of use, even with correctly imputed values.
 
 We know from the data description the NAs are categorical for
-not-applicable. For catagorical variables we will create this level. For
-numeric variables we will impute with zero. In the case of the garage
-year, we impute with the year the home was built. This is not ideal as
-there is likely no garage. Other options include creating a variable for
-“no_garage” or excluding the garage year variable. We may circle back to
-this.
+not-applicable for most variables. For categorical variables described
+we will create this level. For other categorical variables we will use
+the mode. Numeric variables which represent categories such as year or
+MSzone, I will convert them to strings and impute with the mode.
+
+For numeric variables we will impute with zero. I believe most numeric
+NAs in this dataset to be meaningful zeros.
 
 ``` r
 # PoolQC and MiscFeatures are too heavily not-applicable and will not be useful
 df <- df %>%
   dplyr::select(-c("PoolQC", "MiscFeature"))
 
+
+mymode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+
+
+df <- df %>%
+  dplyr::mutate(Functional = ifelse(is.na(Functional), mymode(Functional), Functional)) %>%
+  dplyr::mutate(Electrical = ifelse(is.na(Electrical), mymode(Electrical), Electrical)) %>%
+  dplyr::mutate(KitchenQual = ifelse(is.na(KitchenQual), mymode(KitchenQual), KitchenQual)) %>%
+  dplyr::mutate(Exterior1st = ifelse(is.na(Exterior1st), mymode(Exterior1st), Exterior1st)) %>%
+  dplyr::mutate(Exterior2nd = ifelse(is.na(Exterior2nd), mymode(Exterior2nd), Exterior2nd)) %>%
+  dplyr::mutate(SaleType = ifelse(is.na(SaleType), mymode(SaleType), SaleType))  %>%
+  dplyr::mutate(MasVnrType = ifelse(is.na(MasVnrType), mymode(MasVnrType), MasVnrType)) %>%
+  dplyr::mutate(MSZoning = ifelse(is.na(MSZoning), mymode(MSZoning), MSZoning)) %>%
+  dplyr::mutate(Utilities = ifelse(is.na(Utilities), mymode(Utilities), Utilities)) %>%
+  dplyr::mutate(Alley = ifelse(is.na(Alley), "None", Alley)) %>%
+  dplyr::mutate(FireplaceQu = ifelse(is.na(FireplaceQu), "None", FireplaceQu))%>%
+  dplyr::mutate(Fence = ifelse(is.na(Fence), "None", Fence))%>%
+  dplyr::mutate_at(c("BsmtQual", "BsmtCond", "BsmtExposure", "BsmtFinType1", "BsmtFinType2"), ~ifelse(is.na(.), "None", .)) %>%
+  dplyr::mutate_at(c("GarageType", "GarageFinish", "GarageQual", "GarageCond"), ~ifelse(is.na(.), "None", .)) %>%
+  dplyr::mutate(MSSubClass = as.character(MSSubClass)) %>%
+  dplyr::mutate(MSSubClass = ifelse(is.na(MSSubClass), mymode(MSSubClass), MSSubClass)) 
+  
 vars_missing <- df %>%
   naniar::miss_var_summary() %>%
   dplyr::filter(pct_miss > 0) %>%
   dplyr::pull(variable)
-charvars <- names(df)[sapply(df, class) == 'character']
-char_vars_missing <- vars_missing[vars_missing %in% charvars]
-num_vars_missing <- vars_missing[!vars_missing %in% c(charvars, "SalePrice")]
-# Impute NAs with "not-appl"
+num_vars <- names(df)[sapply(df, class) %in% c("numeric", "integer")]
+num_vars_missing <- vars_missing[vars_missing %in% num_vars]
+num_vars_missing <- num_vars_missing[!num_vars_missing %in% c("SalePrice")]
+
 df <- df %>%
-  dplyr::mutate_at(char_vars_missing, ~tidyr::replace_na(., "not-appl"))  %>%
-  dplyr::mutate_at(num_vars_missing, ~tidyr::replace_na(., 0)) %>%
-  dplyr::mutate(GarageYrBlt = ifelse(GarageYrBlt == 0, YearBuilt, GarageYrBlt)) #custom replacement for garrageyrblt
+  dplyr::mutate_at(num_vars_missing, ~tidyr::replace_na(., 0))  
+
+#check to make sure we imputed everything
+df %>%
+  naniar::miss_var_summary() %>%
+  dplyr::filter(pct_miss > 0) %>%
+  print(n=Inf)
 ```
 
+    ## # A tibble: 1 x 3
+    ##   variable  n_miss pct_miss
+    ##   <chr>      <int>    <dbl>
+    ## 1 SalePrice   1459     50.0
+
 Let’s also remove a few more variables which don’t contain enough
-information and factor non-ordinal categories
+information (too sparse even when imputed) and factor non-ordinal
+categories
 
 ``` r
 # removing some vars that are entirely one group
@@ -211,37 +246,19 @@ hist(df$SalePrice,probability=T, main="Histogram of sales price", 50)
 ## Correlation
 
 Now that we have done some of our cleaning complete we can take a look
-at correlation plots. I’m going to separate nominal and numeric for most
-of this section for plot readability and for the following sections
-which handle these data types differently.
+at correlation plots.
 
 ``` r
 charvars <- names(df)[sapply(df, class) == 'character']
 dftemp <- df %>%
   dplyr::mutate_at(charvars, as.factor) %>%
   dplyr::mutate(MSSubClass = as.factor(MSSubClass))
-
-
 nom_vars <- names(dftemp)[sapply(dftemp, class) == 'factor']
 num_ord_vars <- names(dftemp)[!names(dftemp) %in% nom_vars]
 
-tempnom <- dftemp %>%
-  dplyr::select(c("SalePrice", nom_vars)) %>% # including sale price with ordinal as well
+temp <- dftemp %>%
+  dplyr::select(c("SalePrice", num_ord_vars, nom_vars)) %>% # including sale price with ordinal as well
   dplyr::select(-set) %>%
-  mixed_assoc() %>%
-  dplyr::select(x, y, assoc) %>%
-  tidyr::spread(y, assoc) %>%
-  tibble::column_to_rownames("x")
-```
-
-    ## Note: Using an external vector in selections is ambiguous.
-    ## i Use `all_of(nom_vars)` instead of `nom_vars` to silence this message.
-    ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
-    ## This message is displayed once per session.
-
-``` r
-tempnum <- dftemp %>%
-  dplyr::select(c("SalePrice", num_ord_vars)) %>% # including sale price with ordinal as well
   mixed_assoc() %>%
   dplyr::select(x, y, assoc) %>%
   tidyr::spread(y, assoc) %>%
@@ -252,146 +269,83 @@ tempnum <- dftemp %>%
     ## i Use `all_of(num_ord_vars)` instead of `num_ord_vars` to silence this message.
     ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
     ## This message is displayed once per session.
+    ## Note: Using an external vector in selections is ambiguous.
+    ## i Use `all_of(nom_vars)` instead of `nom_vars` to silence this message.
+    ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
+    ## This message is displayed once per session.
 
 ``` r
-temp <- dftemp %>%
-  dplyr::select(c("SalePrice", num_ord_vars, nom_vars)) %>% # including sale price with ordinal as well
-  dplyr::select(-set) %>%
-  mixed_assoc() %>%
-  dplyr::select(x, y, assoc) %>%
-  tidyr::spread(y, assoc) %>%
-  tibble::column_to_rownames("x")
-
-# allowing for all overlap text
-options(ggrepel.max.overlaps = Inf)
-
-tempnom %>%
-  as.matrix %>%
-  corrr::as_cordf() %>%
-  corrr::network_plot(min_cor = 0.3) 
+corrplot::corrplot(temp %>% as.matrix %>% .[dim(temp)[1]:1,dim(temp)[1]:1], method = 'square', order = 'FPC', type = 'lower', diag = TRUE, tl.col = "black", tl.cex=.9)
 ```
 
 ![](README_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
 
-``` r
-# corrplot::corrplot(tempnom %>% as.matrix %>% .[dim(tempnom)[1]:1,dim(tempnom)[1]:1], method = 'square', order = 'FPC', type = 'lower', diag = TRUE, tl.col = "black", tl.cex=.75)
-
-tempnum %>%
-  as.matrix %>%
-  corrr::as_cordf() %>%
-  corrr::network_plot(min_cor = 0.3)
-```
-
-![](README_files/figure-gfm/unnamed-chunk-7-2.png)<!-- -->
-
-``` r
-corrplot::corrplot(temp %>% as.matrix %>% .[dim(temp)[1]:1,dim(temp)[1]:1], method = 'square', order = 'FPC', type = 'lower', diag = TRUE, tl.col = "black", tl.cex=.25)
-```
-
-![](README_files/figure-gfm/unnamed-chunk-7-3.png)<!-- -->
-
 ## Correlation plot
 
-### Nominal variables
-
-The results from the nominal network plot show three main clusters which
-describe the three main aspects of the data: location (upper left),
-quality(upper right), and size(lower left). It is neat to see the
-aspects having distance from each other in the network plot. Given the
-distance (non-correlation) between location and other aspect variables,
-and the limited number of location variables, it may be vital to squeeze
-the most out of these location variables.
-
-### Numeric(continuous and ordinal) variables
-
-The number of variables describing the size and quality is very high.
-There is a great amount of corelation within these variables.
-
-### Mixed association heatmap
-
-The heatmap displays both numeric and nominal variables together. There
-are several variables which are highly correlated with each other
+Given the distance (non-correlation) between location and other aspect
+variables, and the limited number of location variables, it may be vital
+to squeeze the most out of these location variables. The number of
+variables describing the size and quality is very high. There are
+several variables which are highly correlated with each other
 e.g. garage and year built, MSSubClass and year built, etc. Niche item
 like features such as screened porches, pools, fences, etc, do not seem
 to be very correlated with the outcome.
 
-## Select plots of highly correlated variables
+## General plots
+
+Just getting a glimpse at data.
 
 ``` r
 library(ggplot2)
+numvars <- names(df)[sapply(df, class) %in% c('numeric',"integer")]
+temp <- df %>%
+  dplyr::select(numvars) 
+```
+
+    ## Note: Using an external vector in selections is ambiguous.
+    ## i Use `all_of(numvars)` instead of `numvars` to silence this message.
+    ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
+    ## This message is displayed once per session.
+
+``` r
+temp %>%
+  tidyr::gather(-SalePrice, key = "var", value = "value") %>% 
+  ggplot(aes(x = value, y = SalePrice)) +
+    geom_point() +
+    facet_wrap(~ var, scales = "free") +
+    theme_bw()
+```
+
+![](README_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+
+``` r
 ggplot(df) +
   geom_point(aes(x = GrLivArea, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-8-1.png)<!-- --> We see two
-clear outliers on the right hand side beyond 4500. I imagine these may
-be older homes or commercial properties. Otherwise, it may be an oddity
-in the calculation of GrLivArea (in which calculation is unknown).
+![](README_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+We see two clear outliers on the right hand side beyond 4500. These
+outliers also exist in the test dataset where we cannot remove them.
+Let’s overwrite the SF value with the mean instead of removing them.
 
 ``` r
 df %>% 
   dplyr::filter(GrLivArea > 4500) %>%
-  dplyr::select(GrLivArea, YearBuilt, OverallQual, SaleType, MSZoning, TotalBsmtSF, set)
+  dplyr::select(SalePrice, GrLivArea, YearBuilt, OverallQual, SaleType, MSZoning, TotalBsmtSF, set)
 ```
 
-    ##   GrLivArea YearBuilt OverallQual SaleType MSZoning TotalBsmtSF   set
-    ## 1      4676      2007          10      New       RL        3138 train
-    ## 2      5642      2008          10      New       RL        6110 train
-    ## 3      5095      2008          10      New       RL        5095  test
+    ##   SalePrice GrLivArea YearBuilt OverallQual SaleType MSZoning TotalBsmtSF   set
+    ## 1  12.12676      4676      2007          10      New       RL        3138 train
+    ## 2  11.98293      5642      2008          10      New       RL        6110 train
+    ## 3        NA      5095      2008          10      New       RL        5095  test
 
 ``` r
 df <- df %>%
-  dplyr::filter(!(GrLivArea > 4500 & set == "train"))
+  dplyr::mutate(GrLivArea = ifelse(GrLivArea > 4500, mean(GrLivArea), GrLivArea))
 ```
 
-They are not old or commercial properties. The square footage (SF) seems
-to be erroneous. I am unable to determine if other information in these
-rows is erroneous so I chose to remove the rows.
-
-``` r
-ggplot(df) +
-  geom_point(aes(x = GarageArea, y = SalePrice))
-```
-
-![](README_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
-
-A few outliers on the right and side. I don’t suspect they are erroneous
-and I will leave these rows. The zeros are for houses without garage.
-
-``` r
-hist(df$GarageArea,probability=T, main="Histogram of GarageArea", 50)
-norm <- rnorm(100000, mean(df$GarageArea), sd(df$GarageArea))
-lines(density(df$GarageArea), col=1)
-lines(density(norm),col=2)
-```
-
-![](README_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
-
-``` r
-shapiro.test(df$GarageArea)
-```
-
-    ## 
-    ##  Shapiro-Wilk normality test
-    ## 
-    ## data:  df$GarageArea
-    ## W = 0.97649, p-value < 2.2e-16
-
-This distribution is not normal for a few reasons (zeros, multiple
-peaks, skewness). The multiple peaks which is intuitive as there are
-1,2,3 car garage sizes. If we were to bin this variable to may be too
-correlated with the variable that describes the number of cars the
-garage fits.
-
-``` r
-ggplot(df, aes(x=as.factor(OverallQual), y=SalePrice)) +
-  geom_violin() +
-  geom_boxplot(width=0.1)
-```
-
-![](README_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
-
-## Sparse modeling
+## Sparse modeling for collapsing categories
 
 Gertheiss and Tutz 2010
 
@@ -400,8 +354,8 @@ two categorical variables get merged together when regularization
 strength increases. I wont be using weights as suggested in the paper
 but borrowing the general concept.
 
-For sparse categorical data we will collapse them into fewer groupings.
-One hot encoding is used for LASSO.
+For some of our sparse categorical data we will collapse them into fewer
+groupings. One hot encoding is used for LASSO.
 
 Let’s take a glimpse at counts for categorical variables (not including
 ordinal).
@@ -424,17 +378,15 @@ summary(temp)
     ## < table of extent 0 x 0 >
 
 The following variables caught my eye in terms of usefulness from
-correlation, and in terms of having too many/too small categories.
+correlation, and in terms of having small categories.
 
 ``` r
 nomvars_of_interest <- c(
 "Neighborhood",
-"MSZoning",
 "SaleCondition",
 "BsmtExposure",
 "KitchenQual",
-"GarageType",
-"PavedDrive")
+"BsmtQual")
 
 
 df2 <- df %>%
@@ -480,111 +432,57 @@ plot_glmnet(fit, label=TRUE)
     ## [22] "Neighborhood.StoneBr" "Neighborhood.SWISU"   "Neighborhood.Timber" 
     ## [25] "Neighborhood.Veenker"
 
-![](README_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
-
-    ## [1] "MSZoning.C..all."  "MSZoning.FV"       "MSZoning.not.appl"
-    ## [4] "MSZoning.RH"       "MSZoning.RL"       "MSZoning.RM"
-
-![](README_files/figure-gfm/unnamed-chunk-14-2.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
 
     ## [1] "SaleCondition.Abnorml" "SaleCondition.AdjLand" "SaleCondition.Alloca" 
     ## [4] "SaleCondition.Family"  "SaleCondition.Normal"  "SaleCondition.Partial"
 
-![](README_files/figure-gfm/unnamed-chunk-14-3.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-12-2.png)<!-- -->
 
-    ## [1] "BsmtExposure.Av"       "BsmtExposure.Gd"       "BsmtExposure.Mn"      
-    ## [4] "BsmtExposure.No"       "BsmtExposure.not.appl"
+    ## [1] "BsmtExposure.Av"   "BsmtExposure.Gd"   "BsmtExposure.Mn"  
+    ## [4] "BsmtExposure.No"   "BsmtExposure.None"
 
-![](README_files/figure-gfm/unnamed-chunk-14-4.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-12-3.png)<!-- -->
 
-    ## [1] "KitchenQual.Ex"       "KitchenQual.Fa"       "KitchenQual.Gd"      
-    ## [4] "KitchenQual.not.appl" "KitchenQual.TA"
+    ## [1] "KitchenQual.Ex" "KitchenQual.Fa" "KitchenQual.Gd" "KitchenQual.TA"
 
-![](README_files/figure-gfm/unnamed-chunk-14-5.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-12-4.png)<!-- -->
 
-    ## [1] "GarageType.2Types"   "GarageType.Attchd"   "GarageType.Basment" 
-    ## [4] "GarageType.BuiltIn"  "GarageType.CarPort"  "GarageType.Detchd"  
-    ## [7] "GarageType.not.appl"
+    ## [1] "BsmtQual.Ex"   "BsmtQual.Fa"   "BsmtQual.Gd"   "BsmtQual.None"
+    ## [5] "BsmtQual.TA"
 
-![](README_files/figure-gfm/unnamed-chunk-14-6.png)<!-- -->
-
-    ## [1] "PavedDrive.N" "PavedDrive.P" "PavedDrive.Y"
-
-![](README_files/figure-gfm/unnamed-chunk-14-7.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-12-5.png)<!-- -->
 
 # <a name="sparse2"></a>
 
-## Sparse modeling (continued)
+## Sparse modeling for collapsing categories (continued)
 
-1.  [MSZoning](#sparse2) This variable is difficult to collapse due to
-    unusual types of location such as floating villages which do not bin
-    well in terms being similar. This may not work.
-2.  [Neighborhood_bigbin](#sparse2) Collapsing using LASSO groups.
-3.  [Neighborhood](#sparse2) This is a hack (ideally should do something
-    else) such that we have enough unique values within group to use
-    quantile in feature engineering.
-4.  [BsmtQual](#sparse2) Collapsing some of the smaller categories.
-5.  [BsmtExposure](#sparse2) Collapsing into an indicator.
-6.  [GarageType](#sparse2)Collapsing some of the smaller categories.
-7.  [KitchenQual](#sparse2) Collapsing some of the smaller categories.
-8.  [SaleCondition](#sparse2) Collapsing to norm, abnorm, and partial,
+1.  [BsmtQual_ind](#sparse2) Creating an indicator for feature
+    engineering.
+2.  [BsmtExposure](#sparse2) Collapsing into an indicator.
+3.  [GarageType_ind](#sparse2) Collapsing into an indicator. (main for
+    feature engineering)
+4.  [KitchenQual](#sparse2) Collapsing some of the smaller categories.
+5.  [SaleCondition](#sparse2) Collapsing to norm, abnorm, and partial,
     other categories coefs get zeroed out early / not enough data
 
 ``` r
 df <- df %>%
-  dplyr::mutate(MSZoning = ifelse(MSZoning %in% c("RH","C (all)", "FV", "not-appl", "RM"), "RM", "RL")) %>%
-  dplyr::mutate(Neighborhood_bigbin = ifelse(Neighborhood %in% c("NoRidge", "NridgHt", "StoneBr"), "top",
-                                       ifelse(Neighborhood %in% c("IDOTRR", "MeadowV", "BrDale"), "bottom",
-                                              ifelse(Neighborhood %in% c("BrkSide", "OldTown", "Edwards", "Sawyer", "Blueste", "SWISU","NAmes", "NPkVill", "Mitchel"), "midlow",
-                                                     ifelse(Neighborhood %in% c("NWAmes", "Gilbert", "CollgCr", "Blmngtn", "Crawfor", "ClearCr","Somerst", "Veenker", "Timber", "SawyerW"), "midupp", NA))))) %>% #ideally we would have spatial or hierarchical model for these groups
-   dplyr::mutate(Neighborhood = ifelse(Neighborhood %in% c("BrDale", "IDOTRR"), "MeadowV", Neighborhood)) %>% #small hack for later feature that requires more samples
-  dplyr::mutate(BsmtQual = ifelse(BsmtQual %in% c("TA", "not-appl", "Fa"), 0,
+  dplyr::mutate(Neighborhood2 = ifelse(Neighborhood %in% c("BrDale", "IDOTRR"), "MeadowV", Neighborhood)) %>% #small hack for later feature that requires more samples
+  dplyr::mutate(BsmtQual_ind = ifelse(BsmtQual %in% c("TA", "None", "Fa"), 0,
                                   ifelse(BsmtQual %in% c("Gd"), 1,
                                          ifelse(BsmtQual %in% c("Ex"), 2, NA)))) %>%
-  dplyr::mutate(GarageType = ifelse(GarageType %in% c("BuiltIn", "Attchd"), 1, 0)) %>%
+  dplyr::mutate(GarageType_ind = ifelse(GarageType %in% c("BuiltIn", "Attchd"), 1, 0)) %>%
   dplyr::mutate(BsmtExposure = ifelse(BsmtExposure == "Gd", 1, 0)) %>%
   dplyr::mutate(KitchenQual = ifelse(KitchenQual == "Ex", "Ex",
                                      ifelse(KitchenQual == "Gd", "Gd", "NW"))) %>%
   dplyr::mutate(SaleCondition = ifelse(SaleCondition == "Normal", "Normal",
                                        ifelse(SaleCondition == "Partial", "Partial", "Abnorml")))
-
-
-# collapsing some more straight forward vars based on data definitions
-df <- df %>%
-  dplyr::mutate(PavedDrive = ifelse(PavedDrive == "P", "N", PavedDrive)) %>%
-  dplyr::mutate(has_fireplace = ifelse(Fireplaces == 0, 0, 1))
 ```
 
 # <a name="3"></a>
 
 # Feature engineering
-
-## Homogeneous neighborhood condition
-
-My wife was watching and convinced me to make this one :) The idea here
-is that in a wealthy neighborhood, all of the homes should be in good
-condition. i.e. little variability in the nearby home condition.
-
-``` r
-sdcondi <- sd(df$OverallCond)
-df <- df %>%
-  dplyr::group_by(Neighborhood) %>%
-  dplyr::mutate(neighborhood_condi = sd(OverallCond) - sdcondi) %>%
-  dplyr::mutate(neighborhood_condi_ind = ifelse(neighborhood_condi < -.8, 1,0)) %>%
-  dplyr::ungroup()
-
-ggplot(df) +
-  geom_point(aes(x = neighborhood_condi, y = SalePrice))
-```
-
-![](README_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
-
-``` r
-ggplot(df) +
-  geom_boxplot(aes(x = as.factor(neighborhood_condi_ind), y = SalePrice))
-```
-
-![](README_files/figure-gfm/unnamed-chunk-16-2.png)<!-- -->
 
 ## Age and year
 
@@ -599,12 +497,20 @@ obtain a simple season indicator which is more simple than time series.
 df <- df %>%
   dplyr::mutate(Age = YrSold-YearBuilt) %>%
   dplyr::mutate(AgeOfRemodel = YrSold-YearRemodAdd) %>%
-  dplyr::mutate(SeasonalSell = ifelse(MoSold %in% c(3,4,5,6,7,8), 1,0)) 
+  dplyr::mutate(AgeOfGarage = YrSold-GarageYrBlt) 
+
 ggplot(df) +
   geom_point(aes(x = Age, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+
+``` r
+ggplot(df) +
+  geom_point(aes(x = AgeOfRemodel, y = SalePrice))
+```
+
+![](README_files/figure-gfm/unnamed-chunk-14-2.png)<!-- -->
 
 ## Liveable square feet (SF)
 
@@ -617,23 +523,21 @@ have square footage breakdown we can sum them in a custom way to create
 a heuristic total square footage we will call this `LiveableModSF`.
 
 ``` r
-# # here is an example which breaks down my heuristic factors (essentially I wanted to basement SF to have a varying heuristic multiplier which max out around 1 such that above ground SF is more valuable. Utilizing basement bathrooms to show value in realization of basement as an addition floor to the house)
-# BsmtFullBath <- c(0,1,2,3)
-# BsmtHalfBath <- c(0,1,2,1)
-# BsmtQual <- c(0,.1,.1,.2)
-# BsmtExposure <- c(1,1,1,1)
-# bbath1 <- log(BsmtFullBath+2)*.3
-# bbath2 <- log(BsmtHalfBath+2)*.15
-# (((bbath1 + bbath2)/2)+BsmtQual+.3*BsmtExposure)#*BsmtFinSF1
-
+# This variables represents home visual size from exterior and the usability of the square footage (SF). Ideally I should have one variable for each of these features of size and usability. Future work would be to make two separate variables here.
+# log of baths used to imply diminishing return of baths
+# baths, qual, and exposure of basement impact the usability of its square footage (SF)
+# attached garage makes house look bigger but less impact
+# screen porch makes house look bigger but less impact 
 
 df <- df %>%
-  dplyr::mutate(LiveableModSF = (((log(BsmtFullBath+2)*.3 + log(BsmtHalfBath+2)*.15)/2)+(BsmtQual/10)+.3*BsmtExposure)*BsmtFinSF1 + X1stFlrSF + X2ndFlrSF + GarageType*GarageArea*.5) #garage SF gets zeroed if not attached to the house. attached garage makes home look bigger, feel bigger, curb appeal, etc
+  dplyr::mutate(LiveableModSF = (((log(BsmtFullBath+2)*.3 + log(BsmtHalfBath+2)*.15)/2)+(BsmtQual_ind/10)+.3*BsmtExposure)*(BsmtFinSF1 + BsmtFinSF2) + X1stFlrSF + X2ndFlrSF + .3*GarageType_ind*GarageArea+.3*X3SsnPorch)
+
+#garage SF gets zeroed if not attached to the house. attached garage makes home look bigger, feel bigger, curb appeal, etc
 ggplot(df) +
   geom_point(aes(x = LiveableModSF, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
 
 ## Open floor plan
 
@@ -642,12 +546,12 @@ with open floor plans.
 
 ``` r
 df <- df %>% 
-  dplyr::mutate(open_floor_proxy = X1stFlrSF/log(TotRmsAbvGrd))
+  dplyr::mutate(open_floor_proxy = log(GrLivArea)/TotRmsAbvGrd)
 ggplot(df) +
   geom_point(aes(x = open_floor_proxy, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-19-1.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
 
 ## Total number of bathrooms (zillow search feature :))
 
@@ -657,7 +561,11 @@ especially for families.
 ``` r
 df <- df %>% 
   dplyr::mutate(BathTotal= FullBath + BsmtFullBath + (1/2)*HalfBath + (1/2)*BsmtHalfBath) 
+ggplot(df) +
+  geom_point(aes(x = BathTotal, y = SalePrice))
 ```
+
+![](README_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
 
 ## Quality materials that are in good condition!
 
@@ -669,39 +577,38 @@ decrease sale value! Let’s express this with a new feature.
 ``` r
 df <- df %>%
   dplyr::mutate(ConditionalQuality = OverallQual*OverallCond)
+
 ggplot(df) +
   geom_point(aes(x = ConditionalQuality, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-21-1.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
 
 ## Keeping up with the Jones!
 
-The value of the size of the lot depends greatly on its location. e.g. a
-large lot near a city or in a wealthy neighborhood is going to cost
-more. This may not be useful within this dataset if this dataset is all
-contained within a town! I think this is a variable that would be useful
-with a larger dataset. Lets give it a try! We are hacking up a
-neighborhood specific esque lot size variable. Compare your lot to your
-neighbors lot. Mixed effects may be more useful here but we won’t be
-experimenting with those models today.
+The value of the size of the lot depends on its location. We can see
+from plotting the lot size alone that there is not a direct relationship
+between lot size and price. I will try to feature engineer such that we
+are comparing the size of the lot relative to other nearby lots. We will
+make a second attempt at area specific lot size after target encoding
+the neighborhood variables.
 
 ``` r
 quants <- df %>%
-  dplyr::group_by(Neighborhood) %>%
+  dplyr::group_by(Neighborhood2) %>%
   dplyr::summarise(zone_quant = quantile(LotArea, c(0, .25, 0.5, .75, 1)))
 ```
 
-    ## `summarise()` has grouped output by 'Neighborhood'. You can override using the
+    ## `summarise()` has grouped output by 'Neighborhood2'. You can override using the
     ## `.groups` argument.
 
 ``` r
-nnames <- unique(df$Neighborhood)
+nnames <- unique(df$Neighborhood2)
 neighborhood_specific_quantile <- list()
 
 for(name in nnames){
   neighborhood_specific_quantile[[name]] <-  quants %>% 
-  dplyr::filter(Neighborhood == name) %>%
+  dplyr::filter(Neighborhood2 == name) %>%
   dplyr::pull(zone_quant)
   neighborhood_specific_quantile[[name]][1] <- 0
 }
@@ -711,409 +618,433 @@ df <- df %>%
   dplyr::mutate(keeping_up_with_jones = 
                   as.factor(
                     cut(LotArea, 
-                        breaks = neighborhood_specific_quantile[[as.character(Neighborhood)]], 
+                        breaks = neighborhood_specific_quantile[[as.character(Neighborhood2)]], 
                         labels = c(1,2,3,4), 
                         include.lowest=TRUE,
                         )
                     )
                 )
 
-
 ggplot(df) +
-  geom_violin(aes(x = keeping_up_with_jones, y = SalePrice))
+  geom_boxplot(aes(x = keeping_up_with_jones, y = SalePrice))
 ```
 
-![](README_files/figure-gfm/unnamed-chunk-22-1.png)<!-- -->
+![](README_files/figure-gfm/unnamed-chunk-19-1.png)<!-- -->
 
-## Eggplant
+## Log scaling of explanatory variables
 
-I’m going all out on my basement theory here. I think the proportion of
-the total SF which is in the basement impacts the home price. e.g. a one
-story home with all its SF in the basement.
-
-First Making indicators for basement and garage then overwriting zeros
-with 1s such that I can work with log
+A few of the continuous features are log normal. We will not transform
+some of the continuous variables with zeros e.g. garage and basement as
+it will create even more distance between the meaningful zeros and the
+other values.
 
 ``` r
+# transforming continuous feature
 df <- df %>%
-  dplyr::mutate(has_basement = ifelse(TotalBsmtSF!=0,1,0)) %>%
-  dplyr::mutate(has_garage = ifelse(GarageArea !=0,1,0)) %>%
-  dplyr::mutate(GarageArea2 = ifelse(GarageArea ==0, 1, GarageArea)) %>%
-  dplyr::mutate(TotalBsmtSF2 = ifelse(TotalBsmtSF == 0, 1, TotalBsmtSF))
-```
-
-Imputing the row without basement with mean for the Eggplant variable.
-
-``` r
-df <- df  %>%
-  dplyr::mutate(Eggplant = (log(log(TotalBsmtSF2)/LiveableModSF))) %>%
-  dplyr::mutate(Eggplant = ifelse(!is.finite(Eggplant), NA, Eggplant)) %>%
-  dplyr::mutate(Eggplant = ifelse(is.na(Eggplant), mean(Eggplant, na.rm=TRUE), Eggplant))
-
-ggplot(df) +
-  geom_point(aes(x = Eggplant, y = SalePrice))
-```
-
-![](README_files/figure-gfm/unnamed-chunk-24-1.png)<!-- -->
-
-``` r
-# hack to fix my dplyr mistake above
-df$Eggplant[which(is.na(df$Eggplant))] <- mean(df$Eggplant, na.rm = TRUE)
+  dplyr::mutate(LiveableModSF = log(LiveableModSF),
+                GrLivArea = log(GrLivArea),
+                LotArea = log(LotArea))
 ```
 
 # <a name="4"></a>
 
 # Modeling fitting
 
-## Feature selection
+We will use the h2o auto ML platform for modeling / tuning. We will only
+work with a simple GLM here. Ideally, with more time, we would explore
+the auto tuning of xgboost and catboost in python.
 
-First we will remove variables which we our intuition tells us will not
-be useful due to redundant information, extremely low correlation, or
-sample size too small.
-
-Next we will let feature importance across multiple models decide which
-features we keep. (top half of variables ranked)
-
-We will not transform some of the continuous variables with zeros
-e.g. garage and basement as it will create even more distance between
-the meaningful zeros and the other values.
+Installing h2o latest release (if you need to remove/update old
+installation use commented out code) h2o requires java, download java
+before installing h2o <https://java.com/en/download/>
 
 ``` r
-# transforming continuous feature
-df <- df %>%
-  dplyr::mutate(LiveableModSF = log(LiveableModSF),
-                GrLivArea = log(GrLivArea))
-
-# turning categories that were numeric into factors
-df <- df %>%
-  dplyr::mutate(YrSold = as.factor(as.character(YrSold))) %>%
-  dplyr::mutate(MSSubClass = as.factor(as.character(MSSubClass)))
+# # The following two commands remove any previously installed H2O packages for R.
+# if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
+# if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
+# 
+# # Next, we download packages that H2O depends on.
+# pkgs <- c("RCurl","jsonlite")
+# for (pkg in pkgs) {
+# if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
+# }
+# 
+# # Now we download, install and initialize the H2O package for R.
+# install.packages("h2o", type="source", repos="https://h2o-release.s3.amazonaws.com/h2o/rel-zumbo/2/R")
 ```
 
-``` r
-# install.packages("drat", repos="https://cran.rstudio.com")
-# drat:::addRepo("dmlc")
-# install.packages("xgboost", repos="http://dmlc.ml/drat/", type = "source")
-x <- list(
-"xgboost",
-"randomForest",
-"gbm",
-"earth")
-lapply(x, require, character.only = TRUE)
-```
+## Target encoding
 
-    ## Loading required package: xgboost
-
-    ## 
-    ## Attaching package: 'xgboost'
-
-    ## The following object is masked from 'package:dplyr':
-    ## 
-    ##     slice
-
-    ## Loading required package: randomForest
-
-    ## randomForest 4.7-1.1
-
-    ## Type rfNews() to see new features/changes/bug fixes.
-
-    ## 
-    ## Attaching package: 'randomForest'
-
-    ## The following object is masked from 'package:dplyr':
-    ## 
-    ##     combine
-
-    ## The following object is masked from 'package:ggplot2':
-    ## 
-    ##     margin
-
-    ## Loading required package: gbm
-
-    ## Loaded gbm 2.1.8
-
-    ## Loading required package: earth
-
-    ## [[1]]
-    ## [1] TRUE
-    ## 
-    ## [[2]]
-    ## [1] TRUE
-    ## 
-    ## [[3]]
-    ## [1] TRUE
-    ## 
-    ## [[4]]
-    ## [1] TRUE
+I will be using the target encoding (TE) feature of the h2o platform.
+The goal is to make the columns with several categories more usable.
+I’ve also added the land contour column for the sake of feature
+engineering with the TE version.
 
 ``` r
-toremove <-
-  c(
-    "LandContour",
-    "LotConfig",
-    "LandSlope",
-    "LotShape",
-    "Condition2",
-    "BldgType",
-    "HouseStyle",
-    "RoofStyle",
-    "MasVnrType",
-    "Exterior2nd",
-    "Exterior1st",
-    "BsmtFinType2",
-    "BsmtFinSF2",
-    "BsmtFinSF1",
-    "BsmtFullBath",
-    "BsmtHalfBath",
-    "FullBath",
-    "BedroomAbvGr",
-    "KitchenAbvGr",
-    "GarageYrBlt",
-    "GarageFinish",
-    "WoodDeckSF",
-    "Fence",
-    "PoolArea",
-    "ScreenPorch",
-    "HeatingQC",
-    "Neighborhood"
-  )
+to_be_encoded_columns <- c("Neighborhood", "MSSubClass", "MSZoning", "LandContour")
+
 dfmodel <- df %>%
-  dplyr::select(-toremove)
+  dplyr::mutate_at(to_be_encoded_columns, as.factor)
+# for target encoding later
+
+dfmodeltrain <- dfmodel %>%
+  dplyr::filter(set == "train")
+dfmodeltest<- dfmodel %>%
+  dplyr::filter(set == "test")
+
+library(h2o)
+```
+
+    ## 
+    ## ----------------------------------------------------------------------
+    ## 
+    ## Your next step is to start H2O:
+    ##     > h2o.init()
+    ## 
+    ## For H2O package documentation, ask for help:
+    ##     > ??h2o
+    ## 
+    ## After starting H2O, you can use the Web UI at http://localhost:54321
+    ## For more information visit https://docs.h2o.ai
+    ## 
+    ## ----------------------------------------------------------------------
+
+    ## 
+    ## Attaching package: 'h2o'
+
+    ## The following objects are masked from 'package:stats':
+    ## 
+    ##     cor, sd, var
+
+    ## The following objects are masked from 'package:base':
+    ## 
+    ##     %*%, %in%, &&, ||, apply, as.factor, as.numeric, colnames,
+    ##     colnames<-, ifelse, is.character, is.factor, is.numeric, log,
+    ##     log10, log1p, log2, round, signif, trunc
+
+``` r
+h2o.init(nthreads= -1, max_mem_size = "8g")
+```
+
+    ##  Connection successful!
+    ## 
+    ## R is connected to the H2O cluster: 
+    ##     H2O cluster uptime:         1 hours 19 minutes 
+    ##     H2O cluster timezone:       America/New_York 
+    ##     H2O data parsing timezone:  UTC 
+    ##     H2O cluster version:        3.36.1.2 
+    ##     H2O cluster version age:    24 days  
+    ##     H2O cluster name:           H2O_started_from_R_desktop-g_zzi767 
+    ##     H2O cluster total nodes:    1 
+    ##     H2O cluster total memory:   6.63 GB 
+    ##     H2O cluster total cores:    16 
+    ##     H2O cluster allowed cores:  16 
+    ##     H2O cluster healthy:        TRUE 
+    ##     H2O Connection ip:          localhost 
+    ##     H2O Connection port:        54321 
+    ##     H2O Connection proxy:       NA 
+    ##     H2O Internal Security:      FALSE 
+    ##     R Version:                  R version 4.1.3 (2022-03-10)
+
+``` r
+dfmodeltrain <- as.h2o(dfmodeltrain)
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+dfmodeltest <- as.h2o(dfmodeltest)
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+seed <- 1234
+
+# For k_fold strategy we need to provide fold column
+dfmodeltrain$fold <- h2o.kfold_column(data = dfmodeltrain, nfolds = 10, seed = seed)
+
+
+# Train a TE model
+target_encoder <- h2o.targetencoder(training_frame = dfmodeltrain,
+                                    x = to_be_encoded_columns,
+                                    y = "SalePrice",
+                                    fold_column = "fold",
+                                    data_leakage_handling = "KFold",
+                                    blending = TRUE,
+                                    inflection_point = 3,
+                                    smoothing = 10,
+                                    noise = 0.15,     # In general, the less data you have the more regularisation you need
+                                    seed = seed)
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+# New target encoded train and test sets
+transformed_train <- h2o.transform(target_encoder, dfmodeltrain, as_training=TRUE)
+transformed_test <- h2o.transform(target_encoder, dfmodeltest, noise=0)
+
+train <- as.data.frame(transformed_train)
+test <- as.data.frame(transformed_test)
+h2o.shutdown(prompt = TRUE)
+```
+
+    ## Are you sure you want to shutdown the H2O instance running at http://localhost:54321/ (Y/N)?
+
+## More feature engineering with target encoded features.
+
+The type of house may have a different value depending on where it is
+located. We multiply the two MS features to make this feature. The land
+
+``` r
+#minor feature engineering with new target encoded columns. I'm interested in the feature/interaction of type of home and the type of location.
+dffinal <- rbind(train %>% dplyr::select(-fold), test)
+dffinal <- dffinal %>%
+  dplyr::mutate(
+                ms = MSSubClass_te * MSZoning_te,
+                lot_age_and_qual = LotArea  - LandContour_te - sqrt(Age)) %>%
+  dplyr::select(-to_be_encoded_columns)
 ```
 
     ## Note: Using an external vector in selections is ambiguous.
-    ## i Use `all_of(toremove)` instead of `toremove` to silence this message.
+    ## i Use `all_of(to_be_encoded_columns)` instead of `to_be_encoded_columns` to silence this message.
+    ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
+    ## This message is displayed once per session.
+
+``` r
+library(ggplot2)
+ggplot(dffinal) +
+  geom_point(aes(x = lot_age_and_qual, y = SalePrice))
+```
+
+![](README_files/figure-gfm/unnamed-chunk-23-1.png)<!-- -->
+
+``` r
+# save our processed data as a checkpoint (next step is model fitting.)
+write.csv(dffinal, row.names = FALSE, "dffinal.csv")
+```
+
+## Modeling fitting with grid search
+
+I will be using some of the automated ML from the h2o platform. I will
+grid search to tune hyperparameters. Ideally I would move this to python
+for h2o.xgboost (not available for h2o windows R platform) and catboost.
+Before modeling I will remove variables that are redundant after feature
+engineering and variables with too low variability.
+
+``` r
+library(magrittr)
+df <- read.csv("dffinal.csv") 
+# I will be removing a few categorical columns where variability seems to be too low.
+too_low_var <-
+  c(
+"Id",
+"Condition2",    
+"Condition1",     
+"Alley",      
+"Fence",        
+"BsmtCond",     
+"Electrical",   
+"LandSlope",    
+"ExterCond",  
+"Functional",
+"MoSold",
+#below were used for hacks or are redundant after feature engineering
+"Neighborhood2",
+"LotArea",
+"BsmtQual_ind",
+"GarageYrBlt",
+"YearBuilt", 
+"YearRemodAdd",
+"GarageType_ind",
+"BsmtFullBath",
+"HalfBath",
+"BsmtHalfBath",
+"LandContour_te",
+"MSSubClass_te",
+"MSZoning_te",
+"X3SsnPorch",
+"BsmtFinSF1",
+"BsmtFinSF2",
+"BsmtFinType2")
+# one hot encode
+df <- df %>%
+  dplyr::select(-too_low_var)
+```
+
+    ## Note: Using an external vector in selections is ambiguous.
+    ## i Use `all_of(too_low_var)` instead of `too_low_var` to silence this message.
     ## i See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
     ## This message is displayed once per session.
 
 ``` r
 # one hot encode
-nomvars <- names(dfmodel)[sapply(dfmodel, class) %in% c('factor',"character")]
-df2 <- dfmodel %>%
+nomvars <- names(df)[sapply(df, class) %in% c('factor',"character")]
+df2 <- df %>%
   dplyr::mutate_at(nomvars, as.factor)%>%
   dplyr::select(nomvars) %>%
   dplyr::select(-set)
-dummy <- dummyVars(" ~ .", data=df2, fullRank = FALSE)
+library(caret)
+dummy <- caret::dummyVars(" ~ .", data=df2, fullRank = FALSE)
 df2 <- data.frame(predict(dummy, newdata = df2))
-dffinal <- cbind(df2, dfmodel %>% dplyr::select(-nomvars))
-dffinal$set <- df$set
+dff <- cbind(df2, df %>% dplyr::select(-nomvars))
+dff$set <- df$set
 
 
-data <- dffinal %>%
+
+train <- dff %>%
   dplyr::filter(set == "train") %>%
-  dplyr::select(-set) %>%
-  dplyr::select(-Id)
-outcome <- data$SalePrice
-data <- data %>%
-  dplyr::select(-SalePrice)
-
-
-
-
-library(SuperLearner)
-```
-
-    ## Loading required package: nnls
-    ## Loading required package: gam
-    ## Loading required package: splines
-    ## Loading required package: foreach
-    ## 
-    ## Attaching package: 'foreach'
-    ## 
-    ## The following objects are masked from 'package:purrr':
-    ## 
-    ##     accumulate, when
-    ## 
-    ## Loaded gam 1.20.1
-    ## 
-    ## Super Learner
-    ## Version: 2.0-28
-    ## Package created on 2021-05-04
-
-``` r
-listWrappers()
-```
-
-    ## All prediction algorithm wrappers in SuperLearner:
-
-    ##  [1] "SL.bartMachine"      "SL.bayesglm"         "SL.biglasso"        
-    ##  [4] "SL.caret"            "SL.caret.rpart"      "SL.cforest"         
-    ##  [7] "SL.earth"            "SL.extraTrees"       "SL.gam"             
-    ## [10] "SL.gbm"              "SL.glm"              "SL.glm.interaction" 
-    ## [13] "SL.glmnet"           "SL.ipredbagg"        "SL.kernelKnn"       
-    ## [16] "SL.knn"              "SL.ksvm"             "SL.lda"             
-    ## [19] "SL.leekasso"         "SL.lm"               "SL.loess"           
-    ## [22] "SL.logreg"           "SL.mean"             "SL.nnet"            
-    ## [25] "SL.nnls"             "SL.polymars"         "SL.qda"             
-    ## [28] "SL.randomForest"     "SL.ranger"           "SL.ridge"           
-    ## [31] "SL.rpart"            "SL.rpartPrune"       "SL.speedglm"        
-    ## [34] "SL.speedlm"          "SL.step"             "SL.step.forward"    
-    ## [37] "SL.step.interaction" "SL.stepAIC"          "SL.svm"             
-    ## [40] "SL.template"         "SL.xgboost"
-
-    ## 
-    ## All screening algorithm wrappers in SuperLearner:
-
-    ## [1] "All"
-    ## [1] "screen.corP"           "screen.corRank"        "screen.glmnet"        
-    ## [4] "screen.randomForest"   "screen.SIS"            "screen.template"      
-    ## [7] "screen.ttest"          "write.screen.template"
-
-``` r
-# I know these model types are robust to multicolinearity
-learners <- c("SL.xgboost", "SL.glmnet")
-
-# Stack models
-set.seed(840) # for reproducibility
-
-sl <- CV.SuperLearner(Y = outcome, X = data, SL.library = learners, 
-                   cvControl =list(V = 5), innerCvControl = list(list(V=5)))
-summary(sl)
-```
-
-    ## 
-    ## Call:  
-    ## CV.SuperLearner(Y = outcome, X = data, SL.library = learners, cvControl = list(V = 5),  
-    ##     innerCvControl = list(list(V = 5))) 
-    ## 
-    ## Risk is based on: Mean Squared Error
-    ## 
-    ## All risk estimates are based on V =  5 
-    ## 
-    ##       Algorithm      Ave        se      Min      Max
-    ##   Super Learner 0.012678 0.0010271 0.010733 0.016164
-    ##     Discrete SL 0.013544 0.0010492 0.011460 0.017517
-    ##  SL.xgboost_All 0.014529 0.0011102 0.012580 0.016766
-    ##   SL.glmnet_All 0.013544 0.0010492 0.011460 0.017517
-
-``` r
-ctrl <- SuperLearner.CV.control(V = 5L, shuffle = TRUE)
-sl <- SuperLearner(Y = outcome, X = data, SL.library = learners, verbose = TRUE,
-                   cvControl = ctrl)
-```
-
-    ## Number of covariates in All is: 163
-    ## CV SL.xgboost_All
-    ## CV SL.glmnet_All
-    ## Number of covariates in All is: 163
-    ## CV SL.xgboost_All
-    ## CV SL.glmnet_All
-    ## Number of covariates in All is: 163
-    ## CV SL.xgboost_All
-    ## CV SL.glmnet_All
-    ## Number of covariates in All is: 163
-    ## CV SL.xgboost_All
-    ## CV SL.glmnet_All
-    ## Number of covariates in All is: 163
-    ## CV SL.xgboost_All
-    ## CV SL.glmnet_All
-    ## Non-Negative least squares convergence: TRUE
-    ## full SL.xgboost_All
-    ## full SL.glmnet_All
-
-``` r
-imp_fun <- function(object, newdata) { # for permutation-based VI scores
-predict(object, newdata = newdata)$pred
-}
-par_fun <- function(object, newdata) { # for PDPs
-mean(predict(object, newdata = newdata)$pred)
-}
-library(doParallel) # load the parallel backend
-```
-
-    ## Loading required package: iterators
-    ## Loading required package: parallel
-
-``` r
-cl <- makeCluster(5) # use 5 workers
-registerDoParallel(cl)
-
-var_imp <- vip::vi(sl, method = "permute", train = data, target = outcome, metric = "rmse",
-              pred_wrapper = imp_fun, nsim = 5, parallel = TRUE)
-# Add sparkline representation of feature effects (# Figure 19)
-vip::add_sparklines(var_imp[1L:15L, ], fit = sl, pred.fun = par_fun, train = data,
-digits = 2, verbose = TRUE, trim.outliers = TRUE,
-grid.resolution = 20, parallel = TRUE)
-```
-
-    ## Computing partial dependence...
-    ##   LiveableModSF
-    ##   TotalBsmtSF
-    ##   OverallQual
-    ##   ConditionalQuality
-    ##   GrLivArea
-    ##   Age
-    ##   X2ndFlrSF
-    ##   LotArea
-    ##   X1stFlrSF
-    ##   GarageArea
-    ##   BsmtUnfSF
-    ##   SaleCondition.Abnorml
-    ##   OverallCond
-    ##   YearBuilt
-    ##   BathTotal
-
-![](README_files/figure-gfm/unnamed-chunk-27-1.png)<!-- -->
-
-Feature selection based on importance.
-
-``` r
-varvec <- var_imp$Variable
-varvec <- gsub("\\..*","",varvec)
-varvecun <- unique(varvec)
-varvecun_short <- varvecun[1:round(length(varvecun)/2)]
-dfmodel <- df %>%
-  dplyr::select(varvecun_short)
-```
-
-## Final model
-
-I lack experience tuning specific ML - for simplicity using default
-settings. Future work would be tuning.
-
-``` r
-nomvars <- names(dfmodel)[sapply(dfmodel, class) %in% c('factor',"character")]
-dffinal <- dfmodel %>%
-  dplyr::mutate_at(nomvars, as.factor)
-  
-
-#  one hot encode
-df2 <- dffinal %>%
-  dplyr::select(nomvars) 
-dummy <- dummyVars(" ~ .", data=df2, fullRank = FALSE)
-df2 <- data.frame(predict(dummy, newdata = df2))
-dffinal <- cbind(df2, dffinal %>% dplyr::select(-nomvars))
-dffinal$set <- df$set
-
-data <- dffinal %>%
-  dplyr::filter(set == "train") %>%
-  dplyr::select(-set) 
-outcome <- df %>% 
-  dplyr::filter(set == "train")%>%
-  dplyr::pull(SalePrice)
-
+  dplyr::select(-set)
  
-data_test <- dffinal %>%
+test <- dff %>%
   dplyr::filter(set == "test") %>%
   dplyr::select(-set) 
 
 
+library(h2o)
+h2o.init(nthreads= -1, max_mem_size = "8g")
+```
 
-SuperLearner::listWrappers()
+    ##  Connection successful!
+    ## 
+    ## R is connected to the H2O cluster: 
+    ##     H2O cluster uptime:         1 hours 19 minutes 
+    ##     H2O cluster timezone:       America/New_York 
+    ##     H2O data parsing timezone:  UTC 
+    ##     H2O cluster version:        3.36.1.2 
+    ##     H2O cluster version age:    24 days  
+    ##     H2O cluster name:           H2O_started_from_R_desktop-g_zzi767 
+    ##     H2O cluster total nodes:    1 
+    ##     H2O cluster total memory:   6.63 GB 
+    ##     H2O cluster total cores:    16 
+    ##     H2O cluster allowed cores:  16 
+    ##     H2O cluster healthy:        TRUE 
+    ##     H2O Connection ip:          localhost 
+    ##     H2O Connection port:        54321 
+    ##     H2O Connection proxy:       NA 
+    ##     H2O Internal Security:      FALSE 
+    ##     R Version:                  R version 4.1.3 (2022-03-10)
 
-learners <- list("SL.lm", "SL.xgboost", "SL.earth", c("SL.glmnet","screen.glmnet"),  "SL.randomForest") 
+``` r
+train <- as.h2o(train)
+```
 
-# Stack models
-set.seed(840) # for reproducibility
-sl <- SuperLearner::SuperLearner(Y = outcome, X = data,
-  SL.library = learners)
-sl
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
 
-pred <- predict(sl, data_test, onlySL = TRUE)
-final <- data.frame(Id = df %>% dplyr::filter(set == "test") %>% dplyr::pull(Id), SalePrice = exp(pred$pred))
+``` r
+test <- as.h2o(test)
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+seed <- 12345
+# For k_fold strategy we need to provide fold column
+# train$fold <- h2o.kfold_column(data = train, nfolds = 10, seed = seed)
+
+ 
+# hyper_params <- list( lambda = seq(.001, .005, 0.0002),
+#                        alpha = seq(0,.5, .1))
+# 
+# y <- "SalePrice"
+# x <- setdiff(names(train), c(y, "fold"))
+# # Grid search for selecting the best model
+# grid <- h2o.grid(x = x, y = y ,
+#                  training_frame = train,
+#                  fold_column = "fold",
+#                  algorithm = "glm", grid_id = "id10", hyper_params = hyper_params,seed=1,
+#                  search_criteria = list(strategy = "Cartesian"))
+# grid
+# sortedGrid <- h2o.getGrid("id10", sort_by = "rmse", decreasing = FALSE)
+# sortedGrid
+
+
+y <- "SalePrice"
+x <- setdiff(names(train), c(y, "fold"))
+glmfin <- h2o.glm(x = x, y = y,
+        training_frame = train, seed=1,
+        alpha = .25,
+        lambda = .002) #increasing lambda beyond grid to reduce predictors
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+glmfin
+```
+
+    ## Model Details:
+    ## ==============
+    ## 
+    ## H2ORegressionModel: glm
+    ## Model ID:  GLM_model_R_1655677405487_7 
+    ## GLM Model: summary
+    ##     family     link                              regularization
+    ## 1 gaussian identity Elastic Net (alpha = 0.25, lambda = 0.002 )
+    ##   number_of_predictors_total number_of_active_predictors number_of_iterations
+    ## 1                        175                         131                    1
+    ##     training_frame
+    ## 1 train_sid_a7d6_7
+    ## 
+    ## Coefficients: glm coefficients
+    ##          names coefficients standardized_coefficients
+    ## 1    Intercept    12.270623                 12.024051
+    ## 2 LotShape.IR1    -0.002945                 -0.001387
+    ## 3 LotShape.IR2     0.017199                  0.002842
+    ## 4 LotShape.IR3    -0.027960                 -0.002307
+    ## 5 LotShape.Reg     0.000000                  0.000000
+    ## 
+    ## ---
+    ##                     names coefficients standardized_coefficients
+    ## 171      open_floor_proxy     0.044565                  0.011711
+    ## 172             BathTotal     0.035876                  0.028177
+    ## 173    ConditionalQuality     0.002315                  0.021348
+    ## 174 keeping_up_with_jones     0.013686                  0.015382
+    ## 175                    ms     0.000000                  0.000000
+    ## 176      lot_age_and_qual     0.018474                  0.054086
+    ## 
+    ## H2ORegressionMetrics: glm
+    ## ** Reported on training data. **
+    ## 
+    ## MSE:  0.01208382
+    ## RMSE:  0.1099264
+    ## MAE:  0.07789377
+    ## RMSLE:  0.008556601
+    ## Mean Residual Deviance :  0.01208382
+    ## R^2 :  0.9242168
+    ## Null Deviance :232.8007
+    ## Null D.o.F. :1459
+    ## Residual Deviance :17.64238
+    ## Residual D.o.F. :1328
+    ## AIC :-2037.896
+
+``` r
+pred <- exp(h2o.predict(object=glmfin, newdata=test))
+```
+
+    ##   |                                                                              |                                                                      |   0%  |                                                                              |======================================================================| 100%
+
+``` r
+pred
+```
+
+    ##   exp(predict)
+    ## 1     117257.5
+    ## 2     153474.3
+    ## 3     178546.2
+    ## 4     197184.6
+    ## 5     188510.3
+    ## 6     173011.1
+    ## 
+    ## [1459 rows x 1 column]
+
+``` r
+dftest <- read.csv(here::here("data-raw", "test.csv"))
+final <- data.frame(Id = dftest %>% dplyr::pull(Id), SalePrice = as.vector(pred))
 write.csv(final, row.names = FALSE, "predictions.csv")
 ```
 
 ## Future work
 
-catboost, tuning, time series analysis, mixed modeling
+auto ML for xgboost and catboost, time series analysis, mixed modeling
